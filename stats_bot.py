@@ -88,6 +88,7 @@ def format_max_tweet(case_death_list):
 #Metric 1: States with the most daily cases or deaths they have seen up until this point
 def m1_daily_maxes(states_df, formatted_timestr):
 
+    # State(s) who saw max cases yesterday
     max_cases = states_df.groupby(['state'])['daily_cases'].transform(max) == states_df['daily_cases']
     max_cases = states_df[max_cases]
     max_cases = max_cases[max_cases['date']==formatted_timestr]
@@ -102,6 +103,8 @@ def m1_daily_maxes(states_df, formatted_timestr):
     cases_str = format_max_tweet(case_list)
     deaths_str = format_max_tweet(death_list)
 
+
+    # String formatting
     output_str = ""
     if cases_str != "":
         if len(case_list) == 1:
@@ -133,8 +136,9 @@ def m1_daily_maxes(states_df, formatted_timestr):
     return_str = "%s, %s. %s" % (num_str_case, num_str_deaths, output_str)
     return return_str
 
+#Metric 2: States with the highest cases and death/per capita yesterday/in the last week
 def m2_highest_yesterday(states_df, population_states, formatted_timestr):
-    #Metric 2: States with the highest cases and death/per capita yesterday/in the last week
+
 
     yesterday_df = states_df[states_df['date']==formatted_timestr]
     yesterday_df = pd.merge(yesterday_df, population_states,  how='inner', left_on=['fips','state'], right_on = ['fips','state'])
@@ -147,26 +151,28 @@ def m2_highest_yesterday(states_df, population_states, formatted_timestr):
     max_cases_yesterday = yesterday_df[yesterday_df.daily_cases == yesterday_df.daily_cases.max()].reset_index(drop=True)
     max_deaths_yesterday = yesterday_df[yesterday_df.daily_deaths == yesterday_df.daily_deaths.max()].reset_index(drop=True)
 
-    print(max_cases_yesterday)
-    print(max_deaths_yesterday)
+
     return_str_1 = "The state with the most cases yesterday was %s with %i. Adjusting for population size, the state with the most cases yesterday was %s, with %.2f per 100K people." % (max_cases_yesterday['state'][0], max_cases_yesterday['daily_cases'][0], max_cases_yesterday_population_adjusted['state'][0], max_cases_yesterday_population_adjusted['cases_per_100K_daily'][0])
-    return_str_2 = "For deaths, state with the most yesterday was %s with %i. Adjusting for population size, the state with the most deaths yesterday was %s, with %.3f per 100K people." % (max_deaths_yesterday['state'][0], max_deaths_yesterday['daily_deaths'][0], max_deaths_yesterday_population_adjusted['state'][0], max_deaths_yesterday_population_adjusted['deaths_per_100K_daily'][0])
+    return_str_2 = "For deaths, the state with the most yesterday was %s with %i. Adjusting for population size, the state with the most deaths yesterday was %s, with %.3f per 100K people." % (max_deaths_yesterday['state'][0], max_deaths_yesterday['daily_deaths'][0], max_deaths_yesterday_population_adjusted['state'][0], max_deaths_yesterday_population_adjusted['deaths_per_100K_daily'][0])
 
     return (return_str_1, return_str_2)
 
+
+#Metric 3: State with the highest positive test rate
 def m3_oneday_positivity_rate(covid_tracker_df, formatted_timestr):
-    #Metric 3: State with the highest positive test rate
+
     yesterday_covid_tracker_df = covid_tracker_df.copy()[covid_tracker_df['date']==formatted_timestr]
     yesterday_covid_tracker_df['positive_rate'] = yesterday_covid_tracker_df['positiveIncrease']/yesterday_covid_tracker_df['totalTestResultsIncrease']
-    yesterday_covid_tracker_df.loc[yesterday_covid_tracker_df['positive_rate'] == 1, 'positive_rate' ] = 0
+    yesterday_covid_tracker_df.loc[yesterday_covid_tracker_df['positive_rate'] >= 1, 'positive_rate' ] = 0
+
     max_rate_yesterday = yesterday_covid_tracker_df[yesterday_covid_tracker_df.positive_rate == yesterday_covid_tracker_df.positive_rate.max()].reset_index(drop=True)
     max_rate_yesterday['positive_rate'] = max_rate_yesterday['positive_rate'] * 100
 
     return_str = "The state with the highest 1-day positivity rate was %s, with %.2f%% of all tests coming back positive." % (max_rate_yesterday['state'][0], max_rate_yesterday['positive_rate'][0])
     return return_str
 
+# Metric 4: Highest Positive 7-day test rate
 def m4_sevenday_positivity_rate(covid_tracker_df, formatted_timestr):
-    # Metric 4: Highest Positive 7-day test rate
     # Get current day
     today = date.today()
     yesterday = today - timedelta(1)
@@ -185,12 +191,27 @@ def m4_sevenday_positivity_rate(covid_tracker_df, formatted_timestr):
     sevenday_covid_tracker_df = sevenday_covid_tracker_df.groupby(['state']).sum()
 
     sevenday_covid_tracker_df['positive_rate'] = sevenday_covid_tracker_df['positiveIncrease']/sevenday_covid_tracker_df['totalTestResultsIncrease']
-    sevenday_covid_tracker_df.loc[sevenday_covid_tracker_df['positive_rate'] == 1, 'positive_rate' ] = 0
+    sevenday_covid_tracker_df.loc[sevenday_covid_tracker_df['positive_rate'] >= 1, 'positive_rate' ] = 0
     max_rate_7day = sevenday_covid_tracker_df.copy()[sevenday_covid_tracker_df.positive_rate == sevenday_covid_tracker_df.positive_rate.max()]
     max_rate_7day['positive_rate'] = max_rate_7day['positive_rate'] * 100
 
     return_str = "The state with the highest 7-day positivity rate was %s, with %.2f%% of all tests coming back positive." % (max_rate_7day.index.tolist()[0], max_rate_7day['positive_rate'][0])
     return return_str
+
+#Tweet Shortener, keeping tweets under character limit
+def shortener(input_str, tbot, base_tweet):
+
+    last_tweet_index = len(input_str) / 280
+
+    for i in range((len(input_str) / 280)+1):
+        if i == last_tweet_index:
+            to_send = input_str[i*280:]
+        else:
+            start = (i*280)
+            end = (i+1)*280
+            to_send = input_str[start:end]
+
+        tbot.update_status(to_send, base_tweet.id)
 
 
 # Run everything, send the tweets
@@ -212,7 +233,7 @@ def main():
 
     first = "This is the Covid-19 stats bot report for %s." % formatted_timestr
 
-
+    # Generate tweets
     daily_max_str = m1_daily_maxes(states_df, formatted_timestr)
     highest_cases_yesterday_str = m2_highest_yesterday(states_df, population_states, formatted_timestr)[0]
     highest_deaths_yesterday_str = m2_highest_yesterday(states_df, population_states, formatted_timestr)[1]
@@ -222,17 +243,28 @@ def main():
 
 
     # Tweet the tweets!
-    api = startup()
-    api.update_status(first)
+    if sys.argv[1] == "send":
+        api = startup()
+        api.update_status(first)
 
-    time.sleep(20)
-    tweet = api.user_timeline(id = api.me().id, count = 1)[0]
+        time.sleep(20)
+        tweet = api.user_timeline(id = api.me().id, count = 1)[0]
 
-    api.update_status(daily_max_str, tweet.id)
-    api.update_status(highest_cases_yesterday_str, tweet.id)
-    api.update_status(highest_deaths_yesterday_str, tweet.id)
-    api.update_status(one_day_positivity, tweet.id)
-    api.update_status(seven_day_positivity, tweet.id)
+        shortener(daily_max_str, api, tweet)
+        shortener(highest_cases_yesterday_str, api, tweet)
+        shortener(highest_deaths_yesterday_str, api, tweet)
+        shortener(one_day_positivity, api, tweet)
+        shortener(seven_day_positivity, api, tweet)
+
+
+    # Or test the tweets
+    else:
+        print(first)
+        print(daily_max_str)
+        print(highest_cases_yesterday_str)
+        print(highest_deaths_yesterday_str)
+        print(one_day_positivity)
+        print(seven_day_positivity)
 
 
 
